@@ -1,43 +1,98 @@
 import axios from "axios"
 
+axios.interceptors.request.use(request => {
+  console.log('Starting Request', JSON.stringify(request, null, 2))
+  return request
+})
+
 const API_BASE_URL = "https://api.jquants.com/v1"
 
-let accessToken: string | null = null
+let accessToken: string | null = null;
+let refreshToken: string | null = process.env.JQUANTS_REFRESH_TOKEN || null;
+
+// リフレッシュトークンを永続的に保存する関数
+function saveRefreshToken(token: string) {
+  process.env.JQUANTS_REFRESH_TOKEN = token;
+  // .env.local ファイルに保存
+  const fs = require('fs');
+  const envPath = '.env.local';
+  const envContent = fs.readFileSync(envPath, 'utf8');
+  const updatedEnvContent = envContent.replace(
+    /JQUANTS_REFRESH_TOKEN=.*/,
+    `JQUANTS_REFRESH_TOKEN=${token}`
+  );
+  fs.writeFileSync(envPath, updatedEnvContent);
+}
 
 async function getAccessToken() {
-  if (accessToken) return accessToken
+  if (accessToken) return accessToken;
 
-  const email = process.env.JQUANTS_EMAIL
-  const password = process.env.JQUANTS_PASSWORD
+  if (!refreshToken) {
+    const email = process.env.JQUANTS_EMAIL;
+    const password = process.env.JQUANTS_PASSWORD;
 
-  if (!email || !password) {
-    console.error("J-Quants API credentials are not set in environment variables")
-    throw new Error("J-Quants API credentials are not set")
+    if (!email || !password) {
+      console.error("J-Quants API credentials are not set in environment variables");
+      throw new Error("J-Quants API credentials are not set");
+    }
+
+    console.log("Attempting to get refresh token...");
+    try {
+      const response = await axios.post(`${API_BASE_URL}/token/auth_user`, {
+        mailaddress: email,
+        password: password,
+      });
+
+      console.log("Auth User API Response:", JSON.stringify(response.data, null, 2));
+
+      if (!response.data || !response.data.refreshToken) {
+        console.error("Unexpected response format from J-Quants API for refresh token");
+        throw new Error("Failed to obtain refresh token from J-Quants API");
+      }
+
+      refreshToken = response.data.refreshToken;
+      // リフレッシュトークンを永続的に保存
+      if (refreshToken) {
+        saveRefreshToken(refreshToken);
+        console.log("Refresh token obtained and saved to .env.local.");
+      }
+    } catch (error) {
+      if (axios.isAxiosError(error)) {
+        console.error("Axios error in getRefreshToken:", error.response?.data);
+        throw new Error(`Authentication failed (refresh token): ${error.response?.data?.message || error.message}`);
+      }
+      console.error("Unexpected error in getRefreshToken:", error);
+      throw error;
+    }
   }
 
-  console.log("Attempting to get access token...")
+  console.log("Attempting to get access token using refresh token...");
+  console.log("Current refreshToken value:", refreshToken); // Add this line
   try {
-    const response = await axios.post(`${API_BASE_URL}/token/auth`, {
-      mailaddress: email,
-      password: password,
-    })
+    const response = await axios.post(`${API_BASE_URL}/token/auth_refresh`, {
+      refreshToken: refreshToken,
+    }, {
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
 
-    console.log("Auth API Response:", JSON.stringify(response.data, null, 2))
+    console.log("Auth Refresh API Response:", JSON.stringify(response.data, null, 2));
 
-    if (!response.data || !response.data.token) {
-      console.error("Unexpected response format from J-Quants API")
-      throw new Error("Failed to obtain access token from J-Quants API")
+    if (!response.data || !response.data.idToken) {
+      console.error("Unexpected response format from J-Quants API for ID token");
+      throw new Error("Failed to obtain ID token from J-Quants API");
     }
 
-    accessToken = response.data.token
-    return accessToken
+    accessToken = response.data.idToken;
+    return accessToken;
   } catch (error) {
     if (axios.isAxiosError(error)) {
-      console.error("Axios error in getAccessToken:", error.response?.data)
-      throw new Error(`Authentication failed: ${error.response?.data?.message || error.message}`)
+      console.error("Axios error in getAccessToken (refresh token):", error.response?.data);
+      throw new Error(`Authentication failed (ID token): ${error.response?.data?.message || error.message}`);
     }
-    console.error("Unexpected error in getAccessToken:", error)
-    throw error
+    console.error("Unexpected error in getAccessToken (refresh token):", error);
+    throw error;
   }
 }
 
