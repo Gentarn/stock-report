@@ -70,7 +70,7 @@ async function getAccessToken() {
   console.log("Current refreshToken value:", refreshToken); // Add this line
   try {
     const response = await axios.post(`${API_BASE_URL}/token/auth_refresh`, {
-      refreshToken: refreshToken,
+      refreshtoken: refreshToken,  // APIが要求するキー名に合わせる
     }, {
       headers: {
         'Content-Type': 'application/json'
